@@ -30,20 +30,44 @@
   └── docs/             # Documentation
   ```
 
-### 1.2 Lottery Data Ingestion
-- [ ] Research and select target lottery (e.g., UK National Lottery, EuroMillions, US Powerball)
-- [ ] Build scraper/importer for historical draw results
-- [ ] Define data schema:
-  - Draw date
-  - Main numbers
-  - Bonus/special numbers
+### 1.2 Target Lotteries
+
+#### Australian Lotteries (via The Lott — thelott.com)
+
+| Lottery | Main Numbers | Bonus/Supplementary | Draw Days |
+|---|---|---|---|
+| **Oz Lotto** | 7 from 1–45 | 2 supplementary from same pool | Tuesday |
+| **Powerball AU** | 7 from 1–35 | 1 Powerball from 1–20 | Thursday |
+| **Saturday Lotto** (TattsLotto) | 6 from 1–45 | 2 supplementary from same pool | Saturday |
+| **Mon & Wed Lotto** | 6 from 1–45 | 2 supplementary from same pool | Monday, Wednesday |
+| **Set for Life** | 7 from 1–44 | 2 bonus from same pool | Daily |
+
+#### American Lotteries
+
+| Lottery | Main Numbers | Bonus | Draw Days | Best Data Source |
+|---|---|---|---|---|
+| **Powerball US** | 5 from 1–69 | 1 Powerball from 1–26 | Mon, Wed, Sat | data.ny.gov (API + CSV) |
+| **Mega Millions** | 5 from 1–70 | 1 Mega Ball from 1–25 | Tue, Fri | data.ny.gov (API + CSV) |
+| **Lotto America** | 5 from 1–52 | 1 Star Ball from 1–10 | Mon, Wed, Sat | lottoamerica.com |
+| **Cash4Life** | 5 from 1–60 | 1 Cash Ball from 1–4 | Daily | data.ny.gov (API + CSV) |
+
+### 1.3 Lottery Data Ingestion
+- [ ] Build scraper/importer for Australian results (The Lott — no public API, scraping or Kaggle datasets)
+- [ ] Build importer for US results (NY Open Data Socrata API for Powerball, Mega Millions, Cash4Life)
+- [ ] Build scraper for Lotto America (lottoamerica.com)
+- [ ] Define unified data schema:
+  - Lottery identifier
+  - Draw date and draw number
+  - Main numbers (ordered)
+  - Bonus/supplementary numbers
   - Jackpot amount
   - Number of winners per tier
+  - Multiplier (Power Play / Megaplier / All Star Bonus where applicable)
 - [ ] Store in local database (SQLite for dev, Postgres for prod)
 - [ ] Build data validation and deduplication logic
-- [ ] Seed database with at least 5 years of historical results
+- [ ] Seed database with full available history (Saturday Lotto dates back to 1972; US Powerball to 1992)
 
-### 1.3 Supplementary Data Sources
+### 1.4 Supplementary Data Sources
 - [ ] Planetary position data (Swiss Ephemeris or astronomy API)
 - [ ] Moon phase data (mapped to draw dates)
 - [ ] Calendar/date metadata (day of week, season, holidays)
@@ -216,8 +240,9 @@
 
 ### 5.3 Multi-Lottery Support
 - [ ] Abstract lottery configuration (different number ranges, bonus balls, draw frequencies)
-- [ ] Add support for multiple lotteries (UK, EU, US, etc.)
-- [ ] Per-lottery agent calibration
+- [ ] All 9 target lotteries (5 AU + 4 US) supported from Phase 1 schema
+- [ ] Per-lottery agent calibration (different pool sizes affect statistical analysis)
+- [ ] Cross-lottery pattern comparison ("Do the same numbers trend across different lotteries?")
 
 **Phase 5 Deliverable:** A production-ready API with live data integration and multi-lottery support.
 
