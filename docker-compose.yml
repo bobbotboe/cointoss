@@ -1,0 +1,13 @@
+services:
+  cointoss:
+    build: .
+    ports:
+      - "3005:3005"
+    volumes:
+      - cointoss-data:/app/data
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    restart: unless-stopped
+
+volumes:
+  cointoss-data:

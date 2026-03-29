@@ -1,9 +1,11 @@
 """CoinToss FastAPI application."""
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from cointoss.data.database import init_db
 
@@ -42,3 +44,9 @@ app.include_router(predictions.router, prefix="/api", tags=["predictions"])
 @app.get("/api/health")
 def health():
     return {"status": "ok", "app": "cointoss"}
+
+
+# Serve static frontend in production (Docker)
+static_dir = Path(__file__).resolve().parent.parent.parent / "static"
+if static_dir.is_dir():
+    app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
