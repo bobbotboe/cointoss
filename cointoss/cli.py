@@ -209,67 +209,250 @@ def cmd_analyse(args):
 
 
 def cmd_debate(args):
-    """Run a debate between two agents."""
+    """Run a full multi-agent debate with synthesis."""
     import cointoss.agents  # noqa: F401
-    from cointoss.agents.registry import build_context, get_agent
+    from cointoss.agents.registry import get_agent, list_agents
+    from cointoss.engine.debate import DebateOrchestrator
+    from cointoss.engine.modes import pre_draw_prediction
+    from cointoss.engine.scoring import save_predictions
+    from cointoss.engine.synthesis import synthesise
+
+    init_db()
+    session = get_session()
+    target = date.fromisoformat(args.date) if args.date else None
+    rounds = args.rounds or 1
+
+    # Select agents
+    if args.agents:
+        agent_list = [get_agent(aid.strip()) for aid in args.agents.split(",")]
+    else:
+        agent_list = list_agents()
+
+    agent_names = ", ".join(f"{a.emoji} {a.agent_name}" for a in agent_list)
+    console.print(f"[bold]Debate: {agent_names}[/bold]")
+    console.print(f"[dim]Lottery: {args.lottery} | Rounds: {rounds}[/dim]\n")
+
+    transcript, consensus = pre_draw_prediction(
+        session, args.lottery, agents=agent_list,
+        target_date=target, debate_rounds=rounds,
+    )
+
+    # Print transcript
+    for round_ in transcript.rounds:
+        round_labels = {"analysis": "Opening Analyses", "challenge": "Challenges", "defense": "Defenses"}
+        label = round_labels.get(round_.round_type, round_.round_type.title())
+        console.print(f"\n[bold cyan]═══ Round {round_.round_number}: {label} ═══[/bold cyan]\n")
+
+        for entry in round_.entries:
+            target_str = f" → {entry.target_agent_id}" if entry.target_agent_id else ""
+            console.print(f"[bold]{entry.emoji} {entry.agent_name}{target_str}:[/bold]")
+            console.print(entry.text)
+            console.print()
+
+    # Print synthesis
+    _print_consensus(consensus)
+
+    # Save predictions
+    saved = save_predictions(session, transcript.all_picks, args.lottery, target or date.today())
+    if saved:
+        console.print(f"\n[green]Saved {saved} predictions for scoring.[/green]")
+
+    session.close()
+
+
+def cmd_predict(args):
+    """Quick prediction — all agents pick, no debate, with consensus."""
+    import cointoss.agents  # noqa: F401
+    from cointoss.agents.registry import build_context, list_agents
+    from cointoss.engine.scoring import save_predictions
+    from cointoss.engine.synthesis import ConsensusResult, synthesise
+    from cointoss.engine.debate import DebateTranscript, DebateRound, DebateEntry
 
     init_db()
     session = get_session()
     target = date.fromisoformat(args.date) if args.date else None
     ctx = build_context(session, args.lottery, target_date=target)
+    agent_list = list_agents()
 
-    agent_a = get_agent(args.agent_a)
-    agent_b = get_agent(args.agent_b)
+    console.print(f"[bold]Quick Prediction: {ctx.lottery_name}[/bold]")
+    console.print(f"[dim]Target: {ctx.target_date} | {len(agent_list)} agents[/dim]\n")
 
-    console.print(f"[bold]{agent_a.emoji} {agent_a.agent_name} vs {agent_b.emoji} {agent_b.agent_name}[/bold]\n")
+    # Build a simple transcript for synthesis
+    transcript = DebateTranscript(
+        lottery_id=ctx.lottery_id,
+        lottery_name=ctx.lottery_name,
+        target_date=str(ctx.target_date),
+        agents=[a.agent_id for a in agent_list],
+    )
+    analysis_round = DebateRound(round_number=1, round_type="analysis")
 
-    # Round 1: Both analyse
-    console.print(f"[bold cyan]═══ Round 1: Opening Analyses ═══[/bold cyan]\n")
+    for agent in agent_list:
+        console.print(f"[bold]{agent.emoji} {agent.agent_name}[/bold]")
+        try:
+            result = agent.predict(ctx)
+            console.print(result.analysis)
+            if result.picks:
+                console.print(f"\n  [yellow]PICKS: {result.picks.numbers}[/yellow]" +
+                              (f" + [cyan]{result.picks.bonus}[/cyan]" if result.picks.bonus else ""))
+            analysis_round.entries.append(DebateEntry(
+                agent_id=agent.agent_id, agent_name=agent.agent_name, emoji=agent.emoji,
+                text=result.analysis,
+                picks=result.picks.numbers if result.picks else None,
+                bonus=result.picks.bonus if result.picks else None,
+            ))
+        except Exception as e:
+            console.print(f"  [red]Error: {e}[/red]")
+        console.print("\n" + "─" * 60 + "\n")
 
-    console.print(f"[bold]{agent_a.emoji} {agent_a.agent_name}:[/bold]")
-    result_a = agent_a.predict(ctx)
-    console.print(result_a.analysis)
-    console.print()
+    transcript.rounds.append(analysis_round)
+    consensus = synthesise(transcript)
+    _print_consensus(consensus)
 
-    console.print(f"[bold]{agent_b.emoji} {agent_b.agent_name}:[/bold]")
-    result_b = agent_b.predict(ctx)
-    console.print(result_b.analysis)
-    console.print()
+    saved = save_predictions(session, transcript.all_picks, args.lottery, target or date.today())
+    if saved:
+        console.print(f"\n[green]Saved {saved} predictions for scoring.[/green]")
+    session.close()
 
-    # Round 2: Challenge each other
-    console.print(f"[bold cyan]═══ Round 2: Challenges ═══[/bold cyan]\n")
 
-    console.print(f"[bold]{agent_a.emoji} {agent_a.agent_name} challenges {agent_b.agent_name}:[/bold]")
-    challenge_a = agent_a.challenge(result_b, ctx)
-    console.print(challenge_a)
-    console.print()
+def cmd_post_draw(args):
+    """Post-draw analysis — agents explain why these numbers came up."""
+    import cointoss.agents  # noqa: F401
+    from cointoss.engine.modes import post_draw_analysis
 
-    console.print(f"[bold]{agent_b.emoji} {agent_b.agent_name} challenges {agent_a.agent_name}:[/bold]")
-    challenge_b = agent_b.challenge(result_a, ctx)
-    console.print(challenge_b)
-    console.print()
+    init_db()
+    session = get_session()
+    draw_date = date.fromisoformat(args.date)
 
-    # Round 3: Defend
-    console.print(f"[bold cyan]═══ Round 3: Defenses ═══[/bold cyan]\n")
+    console.print(f"[bold]Post-Draw Analysis: {args.lottery} on {draw_date}[/bold]\n")
 
-    console.print(f"[bold]{agent_a.emoji} {agent_a.agent_name} defends:[/bold]")
-    defense_a = agent_a.defend(challenge_b, result_a.analysis)
-    console.print(defense_a)
-    console.print()
+    try:
+        results = post_draw_analysis(session, args.lottery, draw_date)
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        session.close()
+        return
 
-    console.print(f"[bold]{agent_b.emoji} {agent_b.agent_name} defends:[/bold]")
-    defense_b = agent_b.defend(challenge_a, result_b.analysis)
-    console.print(defense_b)
-    console.print()
-
-    # Summary
-    console.print(f"[bold cyan]═══ Final Picks ═══[/bold cyan]\n")
-    for label, result in [(agent_a.agent_name, result_a), (agent_b.agent_name, result_b)]:
-        if result.picks:
-            console.print(f"  {label}: [yellow]{result.picks.numbers}[/yellow]" +
-                          (f" + [cyan]{result.picks.bonus}[/cyan]" if result.picks.bonus else ""))
+    from cointoss.agents.registry import get_agent
+    for agent_id, text in results.items():
+        agent = get_agent(agent_id)
+        console.print(f"[bold]{agent.emoji} {agent.agent_name}:[/bold]")
+        console.print(text)
+        console.print("\n" + "─" * 60 + "\n")
 
     session.close()
+
+
+def cmd_score(args):
+    """Score predictions against actual results."""
+    from cointoss.engine.scoring import score_predictions
+
+    init_db()
+    session = get_session()
+    scored = score_predictions(session, lottery_id=args.lottery)
+    console.print(f"[green]Scored {scored} predictions.[/green]")
+    session.close()
+
+
+def cmd_leaderboard(args):
+    """Show agent leaderboard."""
+    from cointoss.engine.scoring import get_leaderboard
+
+    init_db()
+    session = get_session()
+    entries = get_leaderboard(session, lottery_id=args.lottery)
+
+    if not entries:
+        console.print("[yellow]No scored predictions yet. Run 'score' after a draw to see results.[/yellow]")
+        session.close()
+        return
+
+    table = Table(title="Agent Leaderboard" + (f" — {args.lottery}" if args.lottery else ""))
+    table.add_column("#", justify="right", style="bold")
+    table.add_column("Agent", style="cyan")
+    table.add_column("Predictions", justify="right")
+    table.add_column("Avg Hits", justify="right", style="yellow")
+    table.add_column("Best", justify="right", style="green")
+    table.add_column("Total Hits", justify="right")
+    table.add_column("Bonus Hits", justify="right")
+
+    for entry in entries:
+        table.add_row(
+            str(entry.rank), entry.agent_id, str(entry.predictions),
+            f"{entry.avg_hits:.2f}", str(entry.best_hits),
+            str(entry.total_hits), str(entry.bonus_hits),
+        )
+
+    console.print(table)
+    session.close()
+
+
+def cmd_told_you_so(args):
+    """Show 'I told you so' moments — predictions with 3+ hits."""
+    from cointoss.engine.scoring import get_told_you_so
+
+    init_db()
+    session = get_session()
+    moments = get_told_you_so(session, lottery_id=args.lottery)
+
+    if not moments:
+        console.print("[yellow]No 'I told you so' moments yet. Keep predicting![/yellow]")
+        session.close()
+        return
+
+    table = Table(title="I Told You So! (3+ hits)")
+    table.add_column("Agent", style="cyan")
+    table.add_column("Date")
+    table.add_column("Predicted", style="dim")
+    table.add_column("Actual", style="dim")
+    table.add_column("Hits", style="bold yellow")
+    table.add_column("Count", justify="right", style="green")
+    table.add_column("Bonus?", justify="center")
+
+    for m in moments:
+        table.add_row(
+            m["agent_id"], m["date"],
+            str(m["predicted"]), str(m["actual"]),
+            str(m["hits"]), str(m["hit_count"]),
+            "[green]✓[/green]" if m["bonus_hit"] else "",
+        )
+
+    console.print(table)
+    session.close()
+
+
+def _print_consensus(consensus):
+    """Pretty-print a consensus result."""
+    console.print(f"\n[bold cyan]═══ CONSENSUS ═══[/bold cyan]\n")
+
+    if not consensus.consensus_numbers:
+        console.print("[yellow]No consensus — agents didn't provide parseable picks.[/yellow]")
+        return
+
+    console.print(f"[bold yellow]CONSENSUS PICKS: {consensus.consensus_numbers}[/bold yellow]")
+    if consensus.consensus_bonus:
+        console.print(f"[bold cyan]CONSENSUS BONUS: {consensus.consensus_bonus}[/bold cyan]")
+
+    # Convergence
+    if consensus.convergence_numbers:
+        console.print(f"\n[bold]Convergence (2+ agents agree):[/bold]")
+        for num, voters in consensus.convergence_numbers:
+            console.print(f"  #{num}: picked by {', '.join(voters)}")
+
+    # All agent picks
+    console.print(f"\n[bold]All Picks:[/bold]")
+    for agent_id, pick_data in consensus.agent_picks.items():
+        emoji = pick_data.get("emoji", "")
+        name = pick_data.get("agent_name", agent_id)
+        nums = pick_data.get("numbers", [])
+        bonus = pick_data.get("bonus", [])
+        console.print(f"  {emoji} {name}: [yellow]{nums}[/yellow]" +
+                      (f" + [cyan]{bonus}[/cyan]" if bonus else ""))
+
+    # Unique picks (dissent)
+    if consensus.unique_picks:
+        console.print(f"\n[bold]Unique Picks (only one agent):[/bold]")
+        for agent_id, nums in consensus.unique_picks.items():
+            console.print(f"  {agent_id}: {nums}")
 
 
 def cmd_agents(args):
@@ -332,17 +515,39 @@ def main():
     sub.add_parser("agents", help="List all available agents")
 
     # analyse
-    p_analyse = sub.add_parser("analyse", help="Run agent analysis on a lottery")
+    p_analyse = sub.add_parser("analyse", help="Run single agent analysis")
     p_analyse.add_argument("lottery", help="Lottery ID (e.g. powerball_us)")
     p_analyse.add_argument("--agent", help="Specific agent ID (default: all agents)")
     p_analyse.add_argument("--date", help="Target date (YYYY-MM-DD, default: today)")
 
-    # debate
-    p_debate = sub.add_parser("debate", help="Run a debate between two agents")
+    # predict — quick all-agent prediction with consensus
+    p_predict = sub.add_parser("predict", help="Quick prediction — all agents pick with consensus")
+    p_predict.add_argument("lottery", help="Lottery ID")
+    p_predict.add_argument("--date", help="Target date (YYYY-MM-DD)")
+
+    # debate — full multi-agent debate with synthesis
+    p_debate = sub.add_parser("debate", help="Full multi-agent debate with synthesis")
     p_debate.add_argument("lottery", help="Lottery ID")
-    p_debate.add_argument("agent_a", help="First agent ID")
-    p_debate.add_argument("agent_b", help="Second agent ID")
+    p_debate.add_argument("--agents", help="Comma-separated agent IDs (default: all)")
+    p_debate.add_argument("--rounds", type=int, default=1, help="Number of challenge/defense rounds (1-3)")
     p_debate.add_argument("--date", help="Target date (YYYY-MM-DD)")
+
+    # post-draw — explain why numbers came up
+    p_post = sub.add_parser("post-draw", help="Post-draw analysis — agents explain the results")
+    p_post.add_argument("lottery", help="Lottery ID")
+    p_post.add_argument("--date", required=True, help="Draw date to analyse (YYYY-MM-DD)")
+
+    # score — score predictions against results
+    p_score = sub.add_parser("score", help="Score predictions against actual results")
+    p_score.add_argument("--lottery", help="Filter by lottery ID")
+
+    # leaderboard
+    p_lb = sub.add_parser("leaderboard", help="Show agent leaderboard")
+    p_lb.add_argument("--lottery", help="Filter by lottery ID")
+
+    # told-you-so
+    p_tys = sub.add_parser("told-you-so", help="Show predictions with 3+ hits")
+    p_tys.add_argument("--lottery", help="Filter by lottery ID")
 
     args = parser.parse_args()
 
@@ -362,7 +567,12 @@ def main():
         "frequency": cmd_frequency,
         "agents": cmd_agents,
         "analyse": cmd_analyse,
+        "predict": cmd_predict,
         "debate": cmd_debate,
+        "post-draw": cmd_post_draw,
+        "score": cmd_score,
+        "leaderboard": cmd_leaderboard,
+        "told-you-so": cmd_told_you_so,
     }
 
     if args.command in commands:

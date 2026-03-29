@@ -79,6 +79,28 @@ class PlanetaryPosition(Base):
     mars_retrograde: Mapped[bool] = mapped_column(default=False)
 
 
+class Prediction(Base):
+    """An agent's prediction for a specific draw."""
+
+    __tablename__ = "predictions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agent_id: Mapped[str] = mapped_column(String(50), index=True)
+    lottery_id: Mapped[str] = mapped_column(String(50), index=True)
+    target_date: Mapped[date] = mapped_column(Date, index=True)
+    predicted_numbers: Mapped[list] = mapped_column(JSON)
+    predicted_bonus: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # Scored after the draw happens
+    main_hits: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    bonus_hits: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    scored_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("agent_id", "lottery_id", "target_date", name="uq_prediction"),
+    )
+
+
 # Lottery registry — configuration for all supported lotteries
 LOTTERY_CONFIGS = [
     # Australian
