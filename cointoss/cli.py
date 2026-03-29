@@ -173,6 +173,122 @@ def cmd_frequency(args):
     session.close()
 
 
+def cmd_analyse(args):
+    """Run one or all agents on a lottery."""
+    import cointoss.agents  # noqa: F401 — triggers registration
+    from cointoss.agents.registry import build_context, get_agent, list_agents
+
+    init_db()
+    session = get_session()
+    target = date.fromisoformat(args.date) if args.date else None
+    ctx = build_context(session, args.lottery, target_date=target)
+
+    if args.agent:
+        agents = [get_agent(args.agent)]
+    else:
+        agents = list_agents()
+
+    for agent in agents:
+        console.print(f"\n[bold]{agent.emoji} {agent.agent_name}[/bold]")
+        console.print(f"[dim]{agent.perspective}[/dim]\n")
+
+        try:
+            result = agent.predict(ctx)
+            console.print(result.analysis)
+
+            if result.picks:
+                console.print(f"\n[bold yellow]PICKS: {result.picks.numbers}[/bold yellow]")
+                if result.picks.bonus:
+                    console.print(f"[bold cyan]BONUS: {result.picks.bonus}[/bold cyan]")
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
+
+        console.print("\n" + "─" * 60)
+
+    session.close()
+
+
+def cmd_debate(args):
+    """Run a debate between two agents."""
+    import cointoss.agents  # noqa: F401
+    from cointoss.agents.registry import build_context, get_agent
+
+    init_db()
+    session = get_session()
+    target = date.fromisoformat(args.date) if args.date else None
+    ctx = build_context(session, args.lottery, target_date=target)
+
+    agent_a = get_agent(args.agent_a)
+    agent_b = get_agent(args.agent_b)
+
+    console.print(f"[bold]{agent_a.emoji} {agent_a.agent_name} vs {agent_b.emoji} {agent_b.agent_name}[/bold]\n")
+
+    # Round 1: Both analyse
+    console.print(f"[bold cyan]═══ Round 1: Opening Analyses ═══[/bold cyan]\n")
+
+    console.print(f"[bold]{agent_a.emoji} {agent_a.agent_name}:[/bold]")
+    result_a = agent_a.predict(ctx)
+    console.print(result_a.analysis)
+    console.print()
+
+    console.print(f"[bold]{agent_b.emoji} {agent_b.agent_name}:[/bold]")
+    result_b = agent_b.predict(ctx)
+    console.print(result_b.analysis)
+    console.print()
+
+    # Round 2: Challenge each other
+    console.print(f"[bold cyan]═══ Round 2: Challenges ═══[/bold cyan]\n")
+
+    console.print(f"[bold]{agent_a.emoji} {agent_a.agent_name} challenges {agent_b.agent_name}:[/bold]")
+    challenge_a = agent_a.challenge(result_b, ctx)
+    console.print(challenge_a)
+    console.print()
+
+    console.print(f"[bold]{agent_b.emoji} {agent_b.agent_name} challenges {agent_a.agent_name}:[/bold]")
+    challenge_b = agent_b.challenge(result_a, ctx)
+    console.print(challenge_b)
+    console.print()
+
+    # Round 3: Defend
+    console.print(f"[bold cyan]═══ Round 3: Defenses ═══[/bold cyan]\n")
+
+    console.print(f"[bold]{agent_a.emoji} {agent_a.agent_name} defends:[/bold]")
+    defense_a = agent_a.defend(challenge_b, result_a.analysis)
+    console.print(defense_a)
+    console.print()
+
+    console.print(f"[bold]{agent_b.emoji} {agent_b.agent_name} defends:[/bold]")
+    defense_b = agent_b.defend(challenge_a, result_b.analysis)
+    console.print(defense_b)
+    console.print()
+
+    # Summary
+    console.print(f"[bold cyan]═══ Final Picks ═══[/bold cyan]\n")
+    for label, result in [(agent_a.agent_name, result_a), (agent_b.agent_name, result_b)]:
+        if result.picks:
+            console.print(f"  {label}: [yellow]{result.picks.numbers}[/yellow]" +
+                          (f" + [cyan]{result.picks.bonus}[/cyan]" if result.picks.bonus else ""))
+
+    session.close()
+
+
+def cmd_agents(args):
+    """List all available agents."""
+    import cointoss.agents  # noqa: F401
+    from cointoss.agents.registry import list_agents
+
+    table = Table(title="Available Agents")
+    table.add_column("", width=3)
+    table.add_column("ID", style="cyan")
+    table.add_column("Name", style="bold")
+    table.add_column("Perspective")
+
+    for agent in list_agents():
+        table.add_row(agent.emoji, agent.agent_id, agent.agent_name, agent.perspective)
+
+    console.print(table)
+
+
 def main():
     parser = argparse.ArgumentParser(prog="cointoss", description="CoinToss — Multi-Agent Lottery Analysis Engine")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable debug logging")
@@ -212,6 +328,22 @@ def main():
     p_freq.add_argument("lottery", help="Lottery ID (e.g. powerball_us)")
     p_freq.add_argument("--last", type=int, help="Only consider last N draws")
 
+    # agents
+    sub.add_parser("agents", help="List all available agents")
+
+    # analyse
+    p_analyse = sub.add_parser("analyse", help="Run agent analysis on a lottery")
+    p_analyse.add_argument("lottery", help="Lottery ID (e.g. powerball_us)")
+    p_analyse.add_argument("--agent", help="Specific agent ID (default: all agents)")
+    p_analyse.add_argument("--date", help="Target date (YYYY-MM-DD, default: today)")
+
+    # debate
+    p_debate = sub.add_parser("debate", help="Run a debate between two agents")
+    p_debate.add_argument("lottery", help="Lottery ID")
+    p_debate.add_argument("agent_a", help="First agent ID")
+    p_debate.add_argument("agent_b", help="Second agent ID")
+    p_debate.add_argument("--date", help="Target date (YYYY-MM-DD)")
+
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -228,6 +360,9 @@ def main():
         "validate": cmd_validate,
         "stats": cmd_stats,
         "frequency": cmd_frequency,
+        "agents": cmd_agents,
+        "analyse": cmd_analyse,
+        "debate": cmd_debate,
     }
 
     if args.command in commands:
